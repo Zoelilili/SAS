@@ -1,0 +1,68 @@
+%macro output_all(infile=, inyear=, beg=, end=, outp=, outp1=);
+proc import datafile = "&infile."
+out = allq
+dbms = csv replace;
+getnames = yes;
+guessingrows=max;
+run;
+
+proc sort data = allq;
+by cp_id app_year app_month approved_dtm;
+run;
+
+*generate rating change variable*
+data allq;
+set allq;
+if (app_year=&inyear. and &beg.=<app_month<=&end.) then flagr=1;
+by cp_id;
+pfinalr=lag(final_grade);
+if (last.cp_id=1 and flagr=1 and first.cp_id=0) then diff=pfinalr-final_grade;
+if (last.cp_id and flagr) then diffagy=grade_agy-final_grade;
+if grade_agy=. then diffagy=.;
+run;
+
+data rachl(where=(prenotch_flag=1));
+set rachl;
+by cp_id;
+lpflag=lag(prenotch_flag);
+if (last.cp_id=1 and flagr=1 and first.cp_id=0) then diff=pfinalr-prenotch_flag;
+if (missing(prenotch_flag) and not missing(lpflag)) then prenotch_flag=lpflag;
+run;
+
+
+****transpose data*******
+proc transpose data=rachl out=rlist1 prefix=survey_id;
+by cp_id cp_name;
+var survey_id;
+run;
+
+proc transpose data=rachl out=rlist2 prefix=final_grade;
+by cp_id cp_name;
+var final_grade;
+run;
+
+proc transpose data=rachl out=rlist3 prefix=approved_dtm;
+by cp_id cp_name;
+var approved_dtm;
+run;
+
+proc transpose data=rachl out=rlist4 prefix=diff;
+by cp_id cp_name;
+var diff;
+run;
+
+data output.rating_change_list ;
+merge rlist1 (drop=_name_) rlist2 (drop =_name_) rlist3 (drop=_name_) rlist4(drop=_name_);
+by cp_id;
+run;
+
+data output.performance_list(where=(agynotch_flag=1) keep=cp_id cp_name survey_id final_grade approved_dtm grade_agy diffagy agynotch_flag);
+set allq;
+if (diffagy>=3 or diffagy=<-3 and not missing(diffagy)) then agynotch_flag=1;
+run;
+
+%mend;
+
+
+
+%output_all(infile=&input\merge_sov_ratingchange.csv, inyear=2018, beg=4, end=6, outp=output.rating_change, outp1=output.performance);
