@@ -1,0 +1,114 @@
+%macro wsratio_all (dsetin, start_date, end_date, wsnum,type);
+
+proc import datafile = "&dsetin."
+out = all
+dbms = csv replace;
+getnames = yes;
+guessingrows=max;
+run;
+
+data all;
+set all;
+appdate=app_year*100+app_month;
+run;
+
+data all;
+set all;
+where appdate>=&start_date. and appdate<= &end_date.;
+run;
+
+data all;
+set all;
+wsdiff = standalone_grade-ws_grade;
+run;
+
+proc freq data = all noprint;
+tables has_warnings * wsdiff / out = wsratio_all;
+run;
+
+
+/*checking multiple rating */
+data act_ws;
+set all;
+where wsdiff ~= 0 and wsdiff~=.;
+run;
+
+proc freq data = act_ws noprint;
+tables cp_id / out = freqws;
+run;
+
+proc sql;
+create table duplic as
+select a.cp_id,a.cp_name, a.survey_id,a.approved_dtm,a.date_of_financials, a.standalone_grade,a.ws_grade,a.domicile_grade,a.override_grade, a.final_grade, b.count
+from act_ws a, freqws b
+where a.cp_id=b.cp_id
+and b.count>1
+order by cp_id, survey_id, appdate;
+quit;
+
+proc export data=duplic outfile="&output/Sov_rating_duplicates.csv" dbms=csv replace; run;
+
+
+/***********************************************************************************************/
+proc sql;
+select sum(COUNT)
+into : w
+from wsratio_all
+where has_warnings ="Y";
+quit;
+
+proc sql;
+select sum(COUNT)
+into : s
+from wsratio_all
+quit;
+
+proc freq data = all noprint;
+tables has_overrides / out = orratio_all;
+run;
+/******************************************************************************************/
+
+%let i = %sysfunc(countw(&wsnum.));
+%do j = 1 %to &i.;
+%let k = %scan(&wsnum.,&j.);
+
+proc freq data = all noprint;
+tables ws_text&k.*ws_downgrade&k. / out = ws_&k._all ;
+run;
+
+data ws_&k._all (rename=(ws_text&k. = ws_text));
+set ws_&k._all ;
+if missing(ws_downgrade&k.) then ws_downgrade = 0;
+if ws_downgrade&k.=. then ws_downgrade = 0;
+else ws_downgrade=ws_downgrade&k.;
+drop ws_downgrade&k.;
+wsnum = &k.;
+wstrigger_among_wssurveys = COUNT/ &w.;
+wstrigger_among_allsurveys = COUNT/ &s.;
+
+run;
+%end;
+
+%let t = %scan(&wsnum., 1);
+
+data ws_all;
+length ws_text $1000;
+format ws_text $1000.;
+set ws_&t._all ;
+run;
+
+%do j = 2 %to &i.;
+%let u = %scan(&wsnum.,&j.);
+proc append base=ws_all data=ws_&u._all force;
+run;
+
+%end;
+
+data ws_all;
+set ws_all(where=(ws_downgrade <= &type. AND ws_downgrade~= 0 AND ws_text ~= ""));
+run;
+
+%mend wsratio_all;
+
+
+%wsratio_all(&input\merge_sov_ratio_check.csv,201707,201806,8447 8448 8449 8450 8451 8452 8453 8454 8455 8456 8457 8458 8459 8460 8461 8462 8463 8464,2);
